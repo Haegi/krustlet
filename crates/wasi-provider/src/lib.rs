@@ -183,6 +183,9 @@ impl<S: ModuleStore + Send + Sync> Provider for WasiProvider<S> {
             pod.name(),
             pod.namespace()
         );
+        for container in pod.containers() {
+            println!("Container Image {:?}", container.image)
+        }
         trace!("Modified pod spec: {:#?}", pod.as_kube_pod());
         if let Some(_timestamp) = pod.deletion_timestamp() {
             let mut handles = self.handles.write().await;

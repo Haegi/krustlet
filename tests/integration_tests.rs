@@ -1,10 +1,11 @@
 use futures::{StreamExt, TryStreamExt};
 use k8s_openapi::api::core::v1::{ConfigMap, Node, Pod, Secret, Taint};
 use kube::{
-    api::{Api, DeleteParams, ListParams, LogParams, PostParams, WatchEvent},
+    api::{Api, DeleteParams, ListParams, LogParams, PatchParams, PostParams, WatchEvent},
     runtime::Informer,
 };
 use serde_json::json;
+use serde_yaml;
 
 #[tokio::test]
 async fn test_wascc_provider() -> Result<(), Box<dyn std::error::Error>> {
@@ -187,7 +188,7 @@ async fn create_wasi_pod(client: kube::Client, pods: &Api<Pod>) -> anyhow::Resul
             "containers": [
                 {
                     "name": "hello-wasi",
-                    "image": "webassembly.azurecr.io/hello-wasm:v1",
+                    "image": "webassembly.azurecr.io/simpleserver:v1.0.0",
                     "volumeMounts": [
                         {
                             "mountPath": "/foo",
@@ -274,6 +275,42 @@ async fn create_wasi_pod(client: kube::Client, pods: &Api<Pod>) -> anyhow::Resul
     assert!(went_ready, "pod never went ready");
 
     Ok(())
+}
+
+async fn patch_pod(pod_name: &str, pods: &Api<Pod>) -> anyhow::Result<()> {
+    let ss_apply = PatchParams::default_apply().force();
+    let patch = serde_yaml::to_vec(&serde_json::json!({
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+            "name": "hello-wasi"
+        },
+        "spec": {
+            "containers": [
+                {
+                    "name": "hello-wasi",
+                    "image": "webassembly.azurecr.io/hello-wasm:v1",
+                    "volumeMounts": [
+                        {
+                            "mountPath": "/foo",
+                            "name": "secret-test"
+                        },
+                        {
+                            "mountPath": "/bar",
+                            "name": "configmap-test"
+                        },
+                        {
+                            "mountPath": "/baz",
+                            "name": "hostpath-test"
+                        }
+                    ]
+                },
+            ]
+        }
+    }))?;
+    let pod_patched = pods.patch(pod_name, &ss_apply, patch).await?;
+    assert_eq!(pod_patched.status.unwrap().phase.unwrap(), "Pending");
+ Ok(())
 }
 
 async fn set_up_wasi_test_environment(client: kube::Client) -> anyhow::Result<()> {
@@ -368,6 +405,8 @@ async fn test_wasi_provider() -> anyhow::Result<()> {
     let pods: Api<Pod> = Api::namespaced(client.clone(), "default");
 
     create_wasi_pod(client.clone(), &pods).await?;
+
+    patch_pod("hello-wasi", &pods).await?;
 
     assert_pod_log_equals(&pods, "hello-wasi", "Hello, world!\n").await?;
 
